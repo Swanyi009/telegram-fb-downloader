@@ -83,3 +83,52 @@ def main():
 
 if __name__ == "__main__":
     main()
+import os
+import subprocess
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+
+TOKEN = os.getenv("TOKEN")
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 မင်္ဂလာပါ\n"
+        "Facebook video link ကို /fb နဲ့ပို့ပါ\n\n"
+        "ဥပမာ:\n/fb https://www.facebook.com/xxxx"
+    )
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📌 အသုံးပြုနည်း\n"
+        "/fb + Facebook video link"
+    )
+
+async def fb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Facebook video link ထည့်ပါ")
+        return
+
+    url = context.args[0]
+    await update.message.reply_text("⏳ Downloading...")
+
+    subprocess.run([
+        "yt-dlp",
+        "-f", "mp4",
+        "-o", "video.mp4",
+        url
+    ])
+
+    await update.message.reply_video(video=open("video.mp4", "rb"))
+
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("fb", fb))
+
+    print("🚀 Facebook Downloader Bot is running...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
