@@ -1,125 +1,95 @@
 import os
-import re
 import asyncio
+import yt_dlp
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
-    MessageHandler,
     ContextTypes,
+    MessageHandler,
     filters,
 )
 
-TOKEN ="8347146318:AAFzx6jsz1e33nTg3mq4si9T-yZRcOGU-KY" 
+# Token from BotFather
+TOKEN = os.getenv("TOKEN")
 
-FB_REGEX = r"(https?://)?(www\.)?(facebook\.com|fb\.watch)/.+"
+# Telegram max upload size for bots
+MAX_SIZE = 50 * 1024 * 1024  # 50 MB
 
+# Facebook URL pattern
+FB_REGEX = r"(https?://)?(www\.)?(facebook\.com|fb\.watch)/.*"
+
+# -------------------- Helper Functions --------------------
+def split_file(file_path):
+    """Split file into chunks if bigger than MAX_SIZE"""
+    size = os.path.getsize(file_path)
+    if size <= MAX_SIZE:
+        return [file_path]
+    chunks = []
+    with open(file_path, "rb") as f:
+        index = 1
+        while True:
+            chunk = f.read(MAX_SIZE)
+            if not chunk:
+                break
+            chunk_name = f"{file_path}.part{index}"
+            with open(chunk_name, "wb") as c:
+                c.write(chunk)
+            chunks.append(chunk_name)
+            index += 1
+    return chunks
+
+async def download_video(url: str):
+    """Download Facebook video with yt-dlp at best quality"""
+    os.makedirs("downloads", exist_ok=True)
+    ydl_opts = {
+        "format": "best",
+        "outtmpl": "downloads/%(title)s.%(ext)s",
+        "quiet": True,
+        "noplaylist": True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        file_path = ydl.prepare_filename(info)
+    return file_path
+
+# -------------------- Bot Handlers --------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 မင်္ဂလာပါ\n"
         "Facebook video link ကို ပို့လိုက်ပါ 📥"
+        "Example: /fb <link>"
     )
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📌 အသုံးပြုနည်း\n"
-        "Facebook video link ကို ပို့ပါ\n"
-        "Bot က video ကို download လုပ်ပြီး ပြန်ပို့ပါမယ်"
-    )
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-
-    if not re.match(FB_REGEX, text):
-        await update.message.reply_text("❌ Facebook link မဟုတ်ပါ")
-        return
-
-    await update.message.reply_text("⏳ Downloading... ခဏစောင့်ပါ")
-
-    filename = "video.mp4"
-
-    cmd = [
-        "yt-dlp",
-        "-f",
-        "mp4",
-        "-o",
-        filename,
-        text
-    ]
-
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await process.communicate()
-
-        if not os.path.exists(filename):
-            await update.message.reply_text("❌ Download မအောင်မြင်ပါ")
-            return
-
-        await update.message.reply_video(
-            video=open(filename, "rb"),
-            caption="✅ Download complete"
-        )
-
-    except Exception as e:
-        await update.message.reply_text(f"Error: {e}")
-
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
-
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    print("🚀 Facebook Downloader Bot is running...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
-import os
-import subprocess
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-
-TOKEN = os.getenv("TOKEN")
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 မင်္ဂလာပါ\n"
-        "Facebook video link ကို /fb နဲ့ပို့ပါ\n\n"
-        "ဥပမာ:\n/fb https://www.facebook.com/xxxx"
-    )
-
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📌 အသုံးပြုနည်း\n"
-        "/fb + Facebook video link"
+        "/start - Bot start message\n"
+        "/help - Usage guide\n"
+        "/fb <Facebook link> - Download video"
     )
 
 async def fb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Facebook video link ထည့်ပါ")
+    if len(context.args) == 0:
+        await update.message.reply_text("❌ Facebook link မပေးထားပါ။ Example: /fb <link>")
+        return
+    url = context.args[0]
+    if not re.match(FB_REGEX, url):
+        await update.message.reply_text("❌ Valid Facebook URL မဟုတ်ပါ")
         return
 
-    url = context.args[0]
-    await update.message.reply_text("⏳ Downloading...")
+    msg = await update.message.reply_text("⏳ Downloading video...")
+    try:
+        file_path = await asyncio.to_thread(download_video, url)
+        # Split if bigger than MAX_SIZE
+        files_to_send = split_file(file_path)
+        for f in files_to_send:
+            await context.bot.send_video(chat_id=update.effective_chat.id, video=open(f, "rb"))
+        await msg.edit_text("✅ Video download complete!")
+    except Exception as e:
+        await msg.edit_text(f"❌ Error: {str(e)}")
 
-    subprocess.run([
-        "yt-dlp",
-        "-f", "mp4",
-        "-o", "video.mp4",
-        url
-    ])
-
-    await update.message.reply_video(video=open("video.mp4", "rb"))
-
+# -------------------- Main --------------------
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
